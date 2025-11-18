@@ -18,7 +18,7 @@ LOCATION = st.selectbox("選擇城市", ["臺北市", "臺中市", "高雄市"])
 url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=CWA-CEA5FE0E-EF3C-472A-BC76-A1E67B6DADFE"
 
 # 2. 發送 GET 請求抓取資料
-res = requests.get(url)
+res = requests.get(url, verify=False)
 
 # 錯誤處理：檢查 HTTP 狀態碼
 if res.status_code != 200:
