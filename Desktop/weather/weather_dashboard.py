@@ -41,8 +41,24 @@ except requests.exceptions.RequestException as e:
 # --- 關鍵除錯點：檢查狀態碼 ---
 if res.status_code != 200:
     st.error(f"CWA API 請求失敗！HTTP 狀態碼：{res.status_code}")
-    st.warning("請檢查您的 CWA 授權碼。程式即將停止。")
-    st.stop() # <--- 這是 NameError 的主要來源
+    # 嘗試顯示原始響應內容，這通常是錯誤訊息
+    st.code(f"原始響應內容（請查看此處是否有錯誤訊息）:\n{res.text}")
+    st.stop() # <--- 程式在這裡停止
+
+# 錯誤處理 2: JSON 解析錯誤
+try:
+    data = res.json()  # <--- 'data' 應該在這裡被定義
+except requests.exceptions.JSONDecodeError:
+    st.error("API 響應非 JSON 格式！")
+    st.code(f"無法解析的內容:\n{res.text}") # 顯示無法解析的內容
+    st.stop() # <--- 程式在這裡停止
+
+# 錯誤處理 3: API 邏輯錯誤
+if data.get('success') != 'true':
+    st.error(f"API 請求失敗: {data.get('message', '未知錯誤')}")
+    st.stop() # <--- 程式在這裡停止
+
+# location_list = data["records"]["location"] # 只有上面都沒錯，才會執行到這裡
 
 # ... 後續的 JSON 解析邏輯保持不變 ...
 
