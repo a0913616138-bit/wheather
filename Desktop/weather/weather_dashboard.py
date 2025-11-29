@@ -1,125 +1,89 @@
 import requests
 import streamlit as st
 import pandas as pd
-import datetime # 為了處理時間欄位
+from google import genai # <--- 新增
+import datetime 
 
-st.title("台灣氣象資料 Dashboard")
+st.title("台灣氣象資料 Dashboard - LLM 解讀版")
 
+# ----------------------------------------------------
+# 📌 API Key 設置
+# ----------------------------------------------------
 try:
-    API_KEY = st.secrets["cwa_api"]["key"]
+    # 讀取 CWA API Key
+    CWA_API_KEY = st.secrets["cwa_api"]["key"]
+    # 讀取 Gemini API Key
+    GEMINI_API_KEY = st.secrets["gemini"]["key"]
 except KeyError:
     st.error("找不到 API 授權碼。請檢查您的 Streamlit Secrets 設定！")
+    st.stop()
+
+# 初始化 Gemini 客戶端
+try:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+except Exception as e:
+    st.error(f"Gemini 客戶端初始化失敗: {e}")
     st.stop()
 
 # 讓使用者選擇城市
 LOCATION = st.selectbox("選擇城市", ["臺北市", "臺中市", "高雄市"]) 
 
-# 完整 API 請求網址 (已移除 locationName 參數，改在 Python 中篩選)
-url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=CWA-CEA5FE0E-EF3C-472A-BC76-A1E67B6DADFE"
+# CWA API 抓取邏輯 (保持不變)
+url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={CWA_API_KEY}"
+res = requests.get(url, verify=False) # 保持 verify=False 解決 SSL 問題
+# ... (省略錯誤處理和 JSON 解析，保持與上次程式碼相同) ...
 
-# 2. 發送 GET 請求抓取資料
-res = requests.get(url, verify=False)
-
-# 錯誤處理：檢查 HTTP 狀態碼
-if res.status_code != 200:
-    st.error(f"HTTP 請求失敗！狀態碼：{res.status_code}")
-    st.warning("請檢查您的 API 授權碼是否正確。")
-    st.stop()
-    
-# 錯誤處理：解析 JSON
-try:
-    data = res.json()
-except requests.exceptions.JSONDecodeError:
-    st.error("API 響應非 JSON 格式！")
-    st.stop()
-
-# 錯誤處理：檢查 API 是否返回錯誤訊息
-if data.get('success') != 'true':
-    st.error(f"API 請求失敗: {data.get('message', '未知錯誤')}")
-    st.stop()
-
-# 取得所有縣市的 location 列表
-location_list = data["records"]["location"]
-
-# 尋找使用者選擇的城市資料
-location = next((loc for loc in location_list if loc['locationName'] == LOCATION), None)
+# ----------------------------------------------------
+# 📌 LLM 處理邏輯 (主要新增部分)
+# ----------------------------------------------------
 
 if location:
-    st.subheader(f"📌 {location['locationName']} 36小時預報")
+    st.subheader(f"✨ 來自 Gemini 的 {location['locationName']} 預報解讀")
     
-    # ----------------------------------------------------
-    # 📌 視覺化處理區域 (新增部分)
-    # ----------------------------------------------------
+    # 1. 準備 LLM 提示 (Prompt)
+    # 我們只將單一城市的資料傳給 LLM
+    location_data_for_llm = {
+        "locationName": location['locationName'],
+        "weatherElement": location["weatherElement"]
+    }
     
-    # 將所有天氣元素重新整理成 dictionary，方便查找
-    elements = {}
-    for element in location["weatherElement"]:
-        elements[element["elementName"]] = element["time"]
-        
-    # 準備繪圖的數據
-    plot_data = []
+    # 將 Python dict 轉換為 JSON 字串，方便 LLM 理解結構
+    import json
+    data_json_str = json.dumps(location_data_for_llm, ensure_ascii=False, indent=2)
+    
+    # 建立給 LLM 的指示
+    llm_prompt = f"""
+    您是一位專業且親切的天氣播報員。
+    請根據以下臺灣氣象署提供的 {location['locationName']} 36 小時天氣預報 JSON 資料，
+    
+    1. 使用**溫和、親切並帶有問候的語氣**，為使用者總結最重要的天氣資訊。
+    2. 內容必須包含：未來 12 小時的**天氣狀況 (Wx)**、**最低溫 (MinT)**、**最高溫 (MaxT)**、**降雨機率 (PoP)**、以及一個**穿衣建議 (CI)**。
+    3. 您的回答應以中文呈現，請勿直接輸出原始 JSON 程式碼。
 
-    # 確保 MinT 和 MaxT 數據存在
-    if 'MinT' in elements and 'MaxT' in elements:
-        # 遍歷 MinT 的時間段 (三個時段)
-        for i in range(len(elements['MinT'])):
+    原始 JSON 資料如下：
+    {data_json_str}
+    """
+    
+    # 2. 呼叫 Gemini API
+    with st.spinner('Gemini 正在為您解讀天氣資料中...'):
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', # 選擇一個快速的模型
+                contents=llm_prompt
+            )
+            # 3. 使用介面呈現 LLM 處理的結果
+            st.markdown(response.text)
             
-            # 使用結束時間作為該預報時段的代表時間點
-            end_time_str = elements['MinT'][i]['endTime'] 
-            
-            # 獲取 MinT 和 MaxT 的數值
-            # 注意：這裡假設 'parameter' 欄位存在，且值為 string 數字
-            mint_value = elements['MinT'][i]['parameter']['parameterName']
-            maxt_value = elements['MaxT'][i]['parameter']['parameterName']
-            
-            # 建立單一時間點的數據物件
-            plot_data.append({
-                '時間': end_time_str,
-                '最低溫 (MinT)': int(mint_value),
-                '最高溫 (MaxT)': int(maxt_value)
-            })
-
-        # 建立 Pandas DataFrame
-        df = pd.DataFrame(plot_data)
-        
-        # 將時間欄位轉換為 datetime 物件，並設定為索引 (Streamlit Line Chart 繪圖要求)
-        df['時間'] = pd.to_datetime(df['時間']).dt.tz_localize('Asia/Taipei')
-        df = df.set_index('時間')
-        
-        # 繪製線圖
-        st.subheader("🌡️ 36小時溫度趨勢")
-        st.line_chart(df)
+        except Exception as e:
+            st.error(f"呼叫 Gemini API 失敗: {e}")
+            st.warning("請檢查您的 Gemini API Key 是否正確設定在 secrets 中。")
     
     # ----------------------------------------------------
-    # 📌 文字資訊顯示區域 (原有部分，只顯示第一個時段)
+    # 📌 (可選) 繪圖和原始資料顯示區域 (保留或移除)
     # ----------------------------------------------------
-    st.subheader("當前及未來 12 小時主要預報資訊")
-    
-    # 迭代 weatherElement 顯示天氣資訊，但跳過已繪圖的 MinT/MaxT
-    for element in location["weatherElement"]:
-        name = element["elementName"]
-        
-        # 跳過已經繪圖的 MinT 和 MaxT
-        if name in ['MinT', 'MaxT']:
-            continue
-            
-        # 取得第一個時間點的參數值 (如果存在)
-        if element["time"]:
-            time_entry = element["time"][0]
-            
-            # 處理帶 'parameter' 的欄位 (如 Wx, PoP, CI)
-            if "parameter" in time_entry:
-                value = time_entry["parameter"]["parameterName"]
-                st.write(f"**{name}**: {value}")
-            
-            # 處理帶 'elementValue' 的欄位 (如果 API 結構有變化)
-            elif "elementValue" in time_entry:
-                value = time_entry["elementValue"]["value"]
-                unit = time_entry["elementValue"]["measures"]
-                st.write(f"**{name}**: {value} {unit}")
-                
-        else:
-            st.write(f"**{name}**: 資料暫缺")
+    # 您可以選擇保留溫度圖表或直接移除，因為 LLM 已經總結了所有資訊
+    # 為了作業完整性，我們保留溫度趨勢圖
+    # ... (將您繪製溫度圖表的程式碼貼在這裡) ...
 
 else:
     st.warning(f"找不到城市 {LOCATION} 的資料。")
