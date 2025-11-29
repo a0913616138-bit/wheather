@@ -15,8 +15,9 @@ try:
     # 讀取 Gemini API Key
     GEMINI_API_KEY = st.secrets["gemini"]["key"]
 except KeyError:
+    # 如果任一個 Key 找不到，程式會在這裡停止
     st.error("找不到 API 授權碼。請檢查您的 Streamlit Secrets 設定！")
-    st.stop()
+    st.stop() # <--- 這是中斷點！
 
 # 初始化 Gemini 客戶端
 try:
@@ -30,8 +31,24 @@ LOCATION = st.selectbox("選擇城市", ["臺北市", "臺中市", "高雄市"])
 
 # CWA API 抓取邏輯 (保持不變)
 url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={CWA_API_KEY}"
-res = requests.get(url, verify=False) # 保持 verify=False 解決 SSL 問題
-# ... (省略錯誤處理和 JSON 解析，保持與上次程式碼相同) ...
+
+try:
+    res = requests.get(url, verify=False, timeout=10) 
+except requests.exceptions.RequestException as e:
+    st.error(f"連線至 CWA API 失敗！錯誤：{e}")
+    st.stop() # 確保程式在這裡停止，避免後續錯誤
+
+# --- 關鍵除錯點：檢查狀態碼 ---
+if res.status_code != 200:
+    st.error(f"CWA API 請求失敗！HTTP 狀態碼：{res.status_code}")
+    st.warning("請檢查您的 CWA 授權碼。程式即將停止。")
+    st.stop() # <--- 這是 NameError 的主要來源
+
+# ... 後續的 JSON 解析邏輯保持不變 ...
+
+# 如果上面都沒有中斷，location 變數會被定義 (可能是 None 或物件)
+location_list = data["records"]["location"]
+location = next((loc for loc in location_list if loc['locationName'] == LOCATION), None)
 
 # ----------------------------------------------------
 # 📌 LLM 處理邏輯 (主要新增部分)
